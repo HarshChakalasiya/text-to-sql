@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: scf-postgres
+    environment:
+      POSTGRES_USER: scf
+      POSTGRES_PASSWORD: scf
+      POSTGRES_DB: scf
+    ports:
+      - "5433:5432"
+    volumes:
+      - scf_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scf -d scf"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  scf_pg_data:

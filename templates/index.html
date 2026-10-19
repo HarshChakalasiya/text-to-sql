@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SCF Text-to-SQL</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --text: #e7ecf3;
+      --muted: #9aa8bc;
+      --accent: #3d9cf0;
+      --border: #2a3648;
+      --ok: #3ecf8e;
+      --warn: #e6b84d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: radial-gradient(1200px 600px at 10% -10%, #1b2a44, transparent),
+                  radial-gradient(900px 500px at 100% 0%, #152033, transparent),
+                  var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    main {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 2.5rem 1.25rem 4rem;
+    }
+    h1 {
+      font-size: 1.75rem;
+      margin: 0 0 0.35rem;
+      letter-spacing: -0.02em;
+    }
+    .sub {
+      color: var(--muted);
+      margin-bottom: 1.75rem;
+      line-height: 1.5;
+    }
+    .ask {
+      display: flex;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+    }
+    textarea {
+      flex: 1;
+      min-height: 88px;
+      resize: vertical;
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.9rem 1rem;
+      font: inherit;
+    }
+    button {
+      background: var(--accent);
+      color: #041018;
+      border: 0;
+      border-radius: 10px;
+      padding: 0 1.2rem;
+      font-weight: 650;
+      cursor: pointer;
+      min-width: 110px;
+    }
+    button:disabled { opacity: 0.6; cursor: wait; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.1rem;
+      margin-bottom: 1rem;
+    }
+    .card h2 {
+      margin: 0 0 0.6rem;
+      font-size: 0.95rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    pre, .answer {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.45;
+      font-size: 0.95rem;
+    }
+    pre {
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 0.85rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+    th, td {
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      padding: 0.45rem 0.35rem;
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 600; }
+    .meta { color: var(--muted); font-size: 0.85rem; margin-bottom: 0.75rem; }
+    .err { color: var(--warn); }
+    .examples {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 1.25rem;
+    }
+    .examples button {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      min-width: 0;
+      padding: 0.4rem 0.7rem;
+      font-weight: 500;
+      font-size: 0.8rem;
+    }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>SCF Text-to-SQL + Hybrid Search</h1>
+    <p class="sub">
+      Ask natural-language questions over a synthetic Supply Chain Finance database.
+      SQL analytics and document RAG (BM25 + vectors) are fused in one pipeline.
+      LLM provider is selected by <code>LLM_PROVIDER</code> (<code>openai</code>, <code>ollama</code>, or <code>claude</code>).
+    </p>
+
+    <div class="examples">
+      <button type="button" data-q="Show overdue invoices above 100000">Overdue invoices</button>
+      <button type="button" data-q="What is invoice discounting in this system?">Invoice discounting</button>
+      <button type="button" data-q="Total financed amount by buyer">Financed by buyer</button>
+      <button type="button" data-q="Average discount rate in basis points by program">Discount rates</button>
+    </div>
+
+    <div class="ask">
+      <textarea id="question" placeholder="Ask a question..."></textarea>
+      <button id="askBtn" type="button">Ask</button>
+    </div>
+
+    <div id="status" class="meta"></div>
+    <div id="error" class="card err hidden"></div>
+    <div id="answerCard" class="card hidden"><h2>Answer</h2><div class="answer" id="answer"></div></div>
+    <div id="sqlCard" class="card hidden"><h2>SQL</h2><pre id="sql"></pre></div>
+    <div id="rowsCard" class="card hidden"><h2>Rows</h2><div id="rows"></div></div>
+    <div id="sourcesCard" class="card hidden"><h2>Sources</h2><div id="sources"></div></div>
+  </main>
+  <script>
+    const qEl = document.getElementById("question");
+    const askBtn = document.getElementById("askBtn");
+    const statusEl = document.getElementById("status");
+
+    document.querySelectorAll(".examples button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        qEl.value = btn.dataset.q;
+        ask();
+      });
+    });
+
+    askBtn.addEventListener("click", ask);
+    qEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) ask();
+    });
+
+    function show(id, on) {
+      document.getElementById(id).classList.toggle("hidden", !on);
+    }
+
+    function renderRows(rows) {
+      const host = document.getElementById("rows");
+      if (!rows || !rows.length) {
+        host.textContent = "No rows.";
+        return;
+      }
+      const cols = Object.keys(rows[0]);
+      let html = "<table><thead><tr>" + cols.map(c => `<th>${c}</th>`).join("") + "</tr></thead><tbody>";
+      for (const row of rows.slice(0, 50)) {
+        html += "<tr>" + cols.map(c => `<td>${row[c] ?? ""}</td>`).join("") + "</tr>";
+      }
+      html += "</tbody></table>";
+      if (rows.length > 50) html += `<p class="meta">Showing 50 of ${rows.length} rows.</p>`;
+      host.innerHTML = html;
+    }
+
+    async function ask() {
+      const question = qEl.value.trim();
+      if (!question) return;
+      askBtn.disabled = true;
+      statusEl.textContent = "Running...";
+      show("error", false);
+      try {
+        const res = await fetch("/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Request failed");
+
+        statusEl.textContent = `intent=${data.intent} · provider=${data.provider} · model=${data.model}`;
+        document.getElementById("answer").textContent = data.answer || "";
+        show("answerCard", true);
+
+        if (data.sql) {
+          document.getElementById("sql").textContent = data.sql;
+          show("sqlCard", true);
+        } else show("sqlCard", false);
+
+        if (data.rows) {
+          renderRows(data.rows);
+          show("rowsCard", true);
+        } else show("rowsCard", false);
+
+        if (data.sources && data.sources.length) {
+          document.getElementById("sources").innerHTML = data.sources.map(s =>
+            `<div><strong>${s.title}</strong> <span class="meta">(${s.source}, score ${s.score})</span></div>`
+          ).join("");
+          show("sourcesCard", true);
+        } else show("sourcesCard", false);
+
+        if (data.error) {
+          document.getElementById("error").textContent = data.error;
+          show("error", true);
+        }
+      } catch (err) {
+        document.getElementById("error").textContent = String(err.message || err);
+        show("error", true);
+        statusEl.textContent = "";
+      } finally {
+        askBtn.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>

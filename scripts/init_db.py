@@ -13,10 +13,12 @@ if str(ROOT) not in sys.path:
 from app.db.models import Base  # noqa: E402
 from app.db.seed import seed_database  # noqa: E402
 from app.db.session import SessionLocal, engine  # noqa: E402
+from app.retrieval.indexing import ensure_pgvector_extension  # noqa: E402
 
 
 def main() -> None:
     print("Creating tables...")
+    ensure_pgvector_extension(engine)
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:

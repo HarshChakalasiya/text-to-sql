@@ -29,6 +29,8 @@ class Settings(BaseSettings):
 
     sql_query_timeout_seconds: int = 10
     hybrid_top_k: int = 5
+    # pgvector persistence for document embeddings; use "memory" for in-process-only index
+    vector_store: Literal["pgvector", "memory"] = "pgvector"
 
 
 @lru_cache
